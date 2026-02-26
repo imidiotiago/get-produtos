@@ -4,7 +4,7 @@ import pandas as pd
 import re
 import io
 
-# --- FUNÇÕES DE UTILIDADE (SUAS FUNÇÕES ORIGINAIS) ---
+# --- FUNÇÕES DE UTILIDADE ---
 def clean_text(text):
     if isinstance(text, str):
         return re.sub(r'[^ -~]', '', text)
@@ -70,7 +70,7 @@ if st.button("🚀 Iniciar Consulta de Produtos"):
                     st.write(f"Buscando Página {page}...")
                     params = {
                         "page": page,
-                        "pageSize": 500, # Reduzido para maior estabilidade na web
+                        "pageSize": 500,
                         "unidadeId": u_id
                     }
                     
@@ -84,6 +84,10 @@ if st.button("🚀 Iniciar Consulta de Produtos"):
                                 break
 
                             for produto in produtos:
+                                # Melhoria: Extração da Categoria de Produto
+                                categoria_obj = produto.get('categoriaProduto') or {}
+                                desc_categoria = clean_text(categoria_obj.get('descricao', 'NÃO INFORMADO'))
+
                                 controla_lote = any('Lote' in c.get('descricao', '') for c in produto.get('caracteristicas', []))
                                 controla_data_validade = any('Data de Validade' in c.get('descricao', '') for c in produto.get('caracteristicas', []))
                                 unidade_medida_principal = clean_text(produto.get('unidadeMedida', ''))
@@ -97,6 +101,7 @@ if st.button("🚀 Iniciar Consulta de Produtos"):
                                     all_data.append({
                                         'Código': clean_text(produto.get('codigo')),
                                         'Descrição': clean_text(produto.get('descricaoComercial')),
+                                        'Categoria': desc_categoria,  # <--- Nova Coluna incluída aqui
                                         'Unidade Medida': unidade_medida_principal,
                                         'Descrição SKU': clean_text(sku.get('descricao', '')),
                                         'Código de Barras': extract_codigo_barras(sku.get('codigosBarras')),
@@ -120,11 +125,8 @@ if st.button("🚀 Iniciar Consulta de Produtos"):
                     status.update(label="Consulta Finalizada!", state="complete", expanded=False)
                     
                     st.success(f"✅ {len(all_data)} SKUs encontrados!")
-                    
-                    # Mostrar prévia
                     st.dataframe(df, use_container_width=True)
 
-                    # Botão de Download
                     buffer = io.BytesIO()
                     with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
                         df.to_excel(writer, index=False)
