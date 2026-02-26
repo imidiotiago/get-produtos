@@ -4,7 +4,6 @@ import pandas as pd
 import re
 import io
 
-# --- FUNÇÕES DE UTILIDADE ---
 def clean_text(text):
     if isinstance(text, str):
         return re.sub(r'[^ -~]', '', text)
@@ -26,29 +25,23 @@ def gera_token_dinamico(client_id, client_secret):
     }
     try:
         response = requests.post(AUTH_URL, data=token_data, timeout=15)
-        if response.status_code == 200:
-            return response.json().get("access_token")
-        else:
-            st.error(f"Erro na Autenticação: {response.status_code}")
-            return None
-    except Exception as e:
-        st.error(f"Falha na conexão: {e}")
+        return response.json().get("access_token") if response.status_code == 200 else None
+    except:
         return None
 
-st.set_page_config(page_title="Consulta de Produtos WMS", layout="wide")
+st.set_page_config(page_title="Consulta WMS", layout="wide")
 st.title("📦 Consulta de Cadastro de Produtos WMS")
 
 with st.sidebar:
-    st.header("🔑 Credenciais")
     c_id = st.text_input("WMS Client ID", type="password")
     c_secret = st.text_input("WMS Client Secret", type="password")
     u_id = st.text_input("Unidade ID (UUID)", value="ac275b55-90f8-44b8-b8cb-bdcfca969526")
 
-if st.button("🚀 Iniciar Consulta de Produtos"):
+if st.button("🚀 Iniciar Consulta"):
     if not all([c_id, c_secret, u_id]):
-        st.warning("⚠️ Preencha os campos na barra lateral.")
+        st.warning("Preencha as credenciais.")
     else:
-        with st.status("Consultando API...", expanded=True) as status:
+        with st.status("Processando...", expanded=True) as status:
             access_token = gera_token_dinamico(c_id, c_secret)
             if access_token:
                 headers = {"Authorization": f"Bearer {access_token}"}
@@ -57,50 +50,47 @@ if st.button("🚀 Iniciar Consulta de Produtos"):
                 api_url = "https://supply.logistica.totvs.app/wms/query/api/v1/produtos"
 
                 while True:
-                    st.write(f"Buscando Página {page}...")
                     params = {"page": page, "pageSize": 500, "unidadeId": u_id}
-                    
                     api_response = requests.get(api_url, params=params, headers=headers, timeout=60)
+                    
                     if api_response.status_code == 200:
                         data = api_response.json()
                         produtos = data.get('items', [])
                         if not produtos: break
 
-                        for produto in produtos:
-                            # --- TRATAMENTO DA CATEGORIA ---
-                            cat_data = produto.get('categoriaProduto')
-                            # Se cat_data for um dicionário, pega 'descricao', senão põe 'Sem Categoria'
-                            desc_categoria = clean_text(cat_data.get('descricao', 'Sem Categoria')) if isinstance(cat_data, dict) else 'Sem Categoria'
-
-                            controla_lote = any('Lote' in c.get('descricao', '') for c in produto.get('caracteristicas', []))
-                            controla_validade = any('Data de Validade' in c.get('descricao', '') for c in produto.get('caracteristicas', []))
+                        for p in produtos:
+                            # EXTRAÇÃO DIRETA DA CATEGORIA
+                            cat_obj = p.get('categoriaProduto')
+                            nome_categoria = clean_text(cat_obj.get('descricao')) if (cat_obj and isinstance(cat_obj, dict)) else "SEM CATEGORIA"
                             
-                            skus_list = produto.get('skus', [])
-                            for sku in skus_list:
+                            # Características
+                            c_lote = any('Lote' in str(c.get('descricao')) for c in p.get('caracteristicas', []))
+                            c_val = any('Validade' in str(c.get('descricao')) for c in p.get('caracteristicas', []))
+                            
+                            for sku in p.get('skus', []):
                                 if not isinstance(sku, dict): continue
                                 all_data.append({
-                                    'Código': clean_text(produto.get('codigo')),
-                                    'Descrição': clean_text(produto.get('descricaoComercial')),
-                                    'Categoria': desc_categoria, # <--- Agora garantido
-                                    'Unidade Medida': clean_text(produto.get('unidadeMedida', '')),
-                                    'Descrição SKU': clean_text(sku.get('descricao', '')),
+                                    'Código': clean_text(p.get('codigo')),
+                                    'Descrição': clean_text(p.get('descricaoComercial')),
+                                    'Categoria': nome_categoria, # <--- Mapeado diretamente do campo 'descricao' do JSON
+                                    'Unidade Medida': clean_text(p.get('unidadeMedida')),
+                                    'Descrição SKU': clean_text(sku.get('descricao')),
                                     'Código de Barras': extract_codigo_barras(sku.get('codigosBarras')),
-                                    'Situação SKU': clean_text(sku.get('situacao', '')),
-                                    'Controla Lote': controla_lote,
-                                    'Controla Validade': controla_validade
+                                    'Situação': clean_text(sku.get('situacao')),
+                                    'Lote': c_lote,
+                                    'Validade': c_val
                                 })
 
                         if not data.get('hasNext'): break
                         page += 1
-                    else:
-                        st.error(f"Erro na página {page}")
-                        break
+                    else: break
 
                 if all_data:
                     df = pd.DataFrame(all_data)
-                    status.update(label="Concluído!", state="complete")
+                    status.update(label="Consulta Finalizada!", state="complete")
                     st.dataframe(df, use_container_width=True)
                     
+                    # Gerar Excel
                     buffer = io.BytesIO()
                     with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
                         df.to_excel(writer, index=False)
